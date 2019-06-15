@@ -22,8 +22,16 @@ randomElement xs = do
   randomDigit <- SR.randomRIO (0, maxIndex)
   return (xs !! randomDigit)
 
-shortyGen :: IO [Char]
-shortyGen = replicateM 7 (randomElement alphaNum)
+shortyGen :: R.Connection -> IO (Either R.Reply String)
+shortyGen conn = do
+  shorty <- replicateM 7 (randomElement alphaNum)
+  existance <- R.runRedis conn $ R.exists $ BC.pack shorty
+  case existance of
+    Left error -> return $ Left error
+    Right ex ->
+        if ex
+        then shortyGen conn
+        else return $ Right shorty
 
 saveURI ::
      R.Connection
@@ -72,11 +80,14 @@ app rConn = do
         parsedUri = parseURI (TL.unpack uri)
     case parsedUri of
       Just _ -> do
-        shawty <- liftIO shortyGen
-        let shorty = BC.pack shawty
-            uri' = encodeUtf8 (TL.toStrict uri)
-        resp <- liftIO (saveURI rConn shorty uri')
-        html (shortyCreated resp shawty)
+        shawty <- liftIO $ shortyGen rConn
+        case shawty of
+          Left reply -> text (TL.pack (show reply))
+          Right shawty' -> do
+            let shorty = BC.pack shawty'
+                uri' = encodeUtf8 (TL.toStrict uri)
+            resp <- liftIO (saveURI rConn shorty uri')
+            html (shortyCreated resp shawty')
       Nothing -> text (shortyNotUri uri)
   get "/:short" $ do
     short <- param "short"
